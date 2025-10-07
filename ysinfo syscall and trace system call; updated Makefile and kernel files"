@@ -1,0 +1,368 @@
+[1mdiff --git a/Makefile b/Makefile[m
+[1mindex 9677b24..3165cd4 100644[m
+[1m--- a/Makefile[m
+[1m+++ b/Makefile[m
+[36m@@ -201,6 +201,9 @@[m [mUPROGS=\[m
+ 	$U/_sixfive\[m
+ 	$U/_hexdump\[m
+ 	$U/_search\[m
+[32m+[m	[32m$U/_trace\[m
+[32m+[m	[32m$U/_sysinfotest\[m
+[32m+[m
+ [m
+ ifeq ($(LAB),syscall)[m
+ UPROGS += \[m
+[1mdiff --git a/kernel/kalloc.c b/kernel/kalloc.c[m
+[1mindex 0699e7e..e7f27e6 100644[m
+[1m--- a/kernel/kalloc.c[m
+[1m+++ b/kernel/kalloc.c[m
+[36m@@ -80,3 +80,18 @@[m [mkalloc(void)[m
+     memset((char*)r, 5, PGSIZE); // fill with junk[m
+   return (void*)r;[m
+ }[m
+[32m+[m
+[32m+[m[32muint64[m
+[32m+[m[32mgetfreemem(void)[m
+[32m+[m[32m{[m
+[32m+[m[32m  struct run *r;[m
+[32m+[m[32m  uint64 free = 0;[m
+[32m+[m
+[32m+[m[32m  acquire(&kmem.lock);[m
+[32m+[m[32m  for (r = kmem.freelist; r; r = r->next)[m
+[32m+[m[32m    free += PGSIZE;[m
+[32m+[m[32m  release(&kmem.lock);[m
+[32m+[m
+[32m+[m[32m  return free;[m
+[32m+[m[32m}[m
+[41m+[m
+[1mdiff --git a/kernel/proc.c b/kernel/proc.c[m
+[1mindex 9d6cf3f..91021a7 100644[m
+[1m--- a/kernel/proc.c[m
+[1m+++ b/kernel/proc.c[m
+[36m@@ -145,6 +145,7 @@[m [mfound:[m
+   memset(&p->context, 0, sizeof(p->context));[m
+   p->context.ra = (uint64)forkret;[m
+   p->context.sp = p->kstack + PGSIZE;[m
+[32m+[m[32m  p->tracemask = 0;[m
+ [m
+   return p;[m
+ }[m
+[36m@@ -293,6 +294,7 @@[m [mkfork(void)[m
+ [m
+   acquire(&wait_lock);[m
+   np->parent = p;[m
+[32m+[m[32m  np->tracemask = p->tracemask;[m
+   release(&wait_lock);[m
+ [m
+   acquire(&np->lock);[m
+[36m@@ -685,3 +687,19 @@[m [mprocdump(void)[m
+     printf("\n");[m
+   }[m
+ }[m
+[32m+[m
+[32m+[m[32muint64[m
+[32m+[m[32mgetnproc(void)[m
+[32m+[m[32m{[m
+[32m+[m[32m  struct proc *p;[m
+[32m+[m[32m  int count = 0;[m
+[32m+[m
+[32m+[m[32m  for (p = proc; p < &proc[NPROC]; p++) {[m
+[32m+[m[32m    acquire(&p->lock);[m
+[32m+[m[32m    if (p->state != UNUSED)[m
+[32m+[m[32m      count++;[m
+[32m+[m[32m    release(&p->lock);[m
+[32m+[m[32m  }[m
+[32m+[m[32m  return count;[m
+[32m+[m[32m}[m
+[41m+[m
+[1mdiff --git a/kernel/proc.h b/kernel/proc.h[m
+[1mindex d021857..7726914 100644[m
+[1m--- a/kernel/proc.h[m
+[1m+++ b/kernel/proc.h[m
+[36m@@ -91,7 +91,7 @@[m [mstruct proc {[m
+   int killed;                  // If non-zero, have been killed[m
+   int xstate;                  // Exit status to be returned to parent's wait[m
+   int pid;                     // Process ID[m
+[31m-[m
+[32m+[m[32m  int tracemask;[m
+   // wait_lock must be held when using this:[m
+   struct proc *parent;         // Parent process[m
+ [m
+[1mdiff --git a/kernel/syscall.c b/kernel/syscall.c[m
+[1mindex 076d965..829e6af 100644[m
+[1m--- a/kernel/syscall.c[m
+[1m+++ b/kernel/syscall.c[m
+[36m@@ -6,6 +6,32 @@[m
+ #include "proc.h"[m
+ #include "syscall.h"[m
+ #include "defs.h"[m
+[32m+[m[32m// Array of syscall names for tracing output[m
+[32m+[m[32mstatic char *syscallnames[] = {[m
+[32m+[m[32m  [SYS_fork] = "fork",[m
+[32m+[m[32m  [SYS_exit] = "exit",[m
+[32m+[m[32m  [SYS_wait] = "wait",[m
+[32m+[m[32m  [SYS_pipe] = "pipe",[m
+[32m+[m[32m  [SYS_read] = "read",[m
+[32m+[m[32m  [SYS_kill] = "kill",[m
+[32m+[m[32m  [SYS_exec] = "exec",[m
+[32m+[m[32m  [SYS_fstat] = "fstat",[m
+[32m+[m[32m  [SYS_chdir] = "chdir",[m
+[32m+[m[32m  [SYS_dup] = "dup",[m
+[32m+[m[32m  [SYS_getpid] = "getpid",[m
+[32m+[m[32m  [SYS_sbrk] = "sbrk",[m
+[32m+[m[32m  [SYS_pause] = "pause",[m
+[32m+[m[32m  [SYS_uptime] = "uptime",[m
+[32m+[m[32m  [SYS_open] = "open",[m
+[32m+[m[32m  [SYS_write] = "write",[m
+[32m+[m[32m  [SYS_mknod] = "mknod",[m
+[32m+[m[32m  [SYS_unlink] = "unlink",[m
+[32m+[m[32m  [SYS_link] = "link",[m
+[32m+[m[32m  [SYS_mkdir] = "mkdir",[m
+[32m+[m[32m  [SYS_close] = "close",[m
+[32m+[m[32m  [SYS_trace] = "trace",[m
+[32m+[m[32m};[m
+[32m+[m
+ [m
+ // Fetch the uint64 at addr from the current process.[m
+ int[m
+[36m@@ -21,9 +47,7 @@[m [mfetchaddr(uint64 addr, uint64 *ip)[m
+ [m
+ // Fetch the nul-terminated string at addr from the current process.[m
+ // Returns length of string, not including nul, or -1 for error.[m
+[31m-int[m
+[31m-fetchstr(uint64 addr, char *buf, int max)[m
+[31m-{[m
+[32m+[m[32mint fetchstr(uint64 addr, char *buf, int max) {[m
+   struct proc *p = myproc();[m
+   if(copyinstr(p->pagetable, buf, addr, max) < 0)[m
+     return -1;[m
+[36m@@ -101,6 +125,8 @@[m [mextern uint64 sys_unlink(void);[m
+ extern uint64 sys_link(void);[m
+ extern uint64 sys_mkdir(void);[m
+ extern uint64 sys_close(void);[m
+[32m+[m[32mextern uint64 sys_trace(void);[m
+[32m+[m[32mextern uint64 sys_sysinfo(void);[m
+ [m
+ // An array mapping syscall numbers from syscall.h[m
+ // to the function that handles the system call.[m
+[36m@@ -126,6 +152,9 @@[m [mstatic uint64 (*syscalls[])(void) = {[m
+ [SYS_link]    sys_link,[m
+ [SYS_mkdir]   sys_mkdir,[m
+ [SYS_close]   sys_close,[m
+[32m+[m[32m[SYS_trace]    sys_trace,[m
+[32m+[m[32m[SYS_sysinfo] sys_sysinfo,[m
+[32m+[m
+ };[m
+ [m
+ void[m
+[36m@@ -139,6 +168,11 @@[m [msyscall(void)[m
+     // Use num to lookup the system call function for num, call it,[m
+     // and store its return value in p->trapframe->a0[m
+     p->trapframe->a0 = syscalls[num]();[m
+[32m+[m[32m    if (p->tracemask & (1 << num)){[m
+[32m+[m[32m      printf("%d: syscall %s -> %ld\n", p->pid, syscallnames[num], p->trapframe->a0);[m
+[32m+[m
+[32m+[m[32m    }[m
+[32m+[m
+   } else {[m
+     printf("%d %s: unknown sys call %d\n",[m
+             p->pid, p->name, num);[m
+[1mdiff --git a/kernel/syscall.h b/kernel/syscall.h[m
+[1mindex 3dd926d..7781447 100644[m
+[1m--- a/kernel/syscall.h[m
+[1m+++ b/kernel/syscall.h[m
+[36m@@ -20,3 +20,7 @@[m
+ #define SYS_link   19[m
+ #define SYS_mkdir  20[m
+ #define SYS_close  21[m
+[32m+[m[32m#define SYS_trace  22[m
+[32m+[m[32m#define SYS_sysinfo 23[m
+[41m+[m
+[41m+[m
+[1mdiff --git a/kernel/sysinfo.h b/kernel/sysinfo.h[m
+[1mnew file mode 100644[m
+[1mindex 0000000..340626d[m
+[1m--- /dev/null[m
+[1m+++ b/kernel/sysinfo.h[m
+[36m@@ -0,0 +1,8 @@[m
+[32m+[m[32m// kernel/sysinfo.h[m
+[32m+[m[32m// This struct is used to pass system info from kernel to user.[m
+[32m+[m
+[32m+[m[32mstruct sysinfo {[m
+[32m+[m[32m  uint64 freemem;  // total free memory in bytes[m
+[32m+[m[32m  uint64 nproc;    // number of active (non-unused) processes[m
+[32m+[m[32m};[m
+[32m+[m
+[1mdiff --git a/kernel/sysproc.c b/kernel/sysproc.c[m
+[1mindex 3044d00..ebdbf65 100644[m
+[1m--- a/kernel/sysproc.c[m
+[1m+++ b/kernel/sysproc.c[m
+[36m@@ -61,6 +61,15 @@[m [msys_sbrk(void)[m
+   }[m
+   return addr;[m
+ }[m
+[32m+[m[32muint64[m
+[32m+[m[32msys_trace(void)[m
+[32m+[m[32m{[m
+[32m+[m[32m  int mask;[m
+[32m+[m[32m  argint(0, &mask);[m
+[32m+[m[32m  struct proc *p = myproc();[m
+[32m+[m[32m  p->tracemask = mask;[m
+[32m+[m[32m  return 0;[m
+[32m+[m[32m}[m
+ [m
+ uint64[m
+ sys_pause(void)[m
+[36m@@ -105,3 +114,29 @@[m [msys_uptime(void)[m
+   release(&tickslock);[m
+   return xticks;[m
+ }[m
+[32m+[m
+[32m+[m[32m#include "kernel/sysinfo.h"[m
+[32m+[m[32m#include "defs.h"[m
+[32m+[m[32m#include "memlayout.h"[m
+[32m+[m
+[32m+[m[32m// Functions we'll write next[m
+[32m+[m[32mextern uint64 getfreemem(void);[m
+[32m+[m[32mextern uint64 getnproc(void);[m
+[32m+[m
+[32m+[m[32muint64[m
+[32m+[m[32msys_sysinfo(void)[m
+[32m+[m[32m{[m
+[32m+[m[32m  struct sysinfo info;[m
+[32m+[m[32m  uint64 addr; // user pointer[m
+[32m+[m
+[32m+[m[32m  argaddr(0, &addr);[m
+[32m+[m
+[32m+[m[32m  info.freemem = getfreemem();[m
+[32m+[m[32m  info.nproc = getnproc();[m
+[32m+[m
+[32m+[m[32m  if (copyout(myproc()->pagetable, addr, (char *)&info, sizeof(info)) < 0)[m
+[32m+[m[32m    return -1;[m
+[32m+[m
+[32m+[m[32m  return 0;[m
+[32m+[m[32m}[m
+[41m+[m
+[1mdiff --git a/user/sysinfotest.c b/user/sysinfotest.c[m
+[1mnew file mode 100644[m
+[1mindex 0000000..90057d7[m
+[1m--- /dev/null[m
+[1m+++ b/user/sysinfotest.c[m
+[36m@@ -0,0 +1,52 @@[m
+[32m+[m[32m#include "kernel/types.h"[m
+[32m+[m[32m#include "kernel/riscv.h"[m
+[32m+[m[32m#include "kernel/sysinfo.h"[m
+[32m+[m[32m#include "user/user.h"[m
+[32m+[m
+[32m+[m[32m// Simple helper to get system info safely[m
+[32m+[m[32mvoid[m
+[32m+[m[32mget_sysinfo(struct sysinfo *s)[m
+[32m+[m[32m{[m
+[32m+[m[32m  if (sysinfo(s) < 0) {[m
+[32m+[m[32m    printf("sysinfotest: system call failed!\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mint[m
+[32m+[m[32mmain(void)[m
+[32m+[m[32m{[m
+[32m+[m[32m  struct sysinfo before, after;[m
+[32m+[m
+[32m+[m[32m  // Get initial system info (before memory allocation)[m
+[32m+[m[32m  get_sysinfo(&before);[m
+[32m+[m
+[32m+[m[32m  // Try allocating one page (4KB)[m
+[32m+[m[32m  void *mem = malloc(4096);[m
+[32m+[m[32m  if (mem == 0) {[m
+[32m+[m[32m    printf("sysinfotest: couldn't allocate memory\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Get system info again after allocation[m
+[32m+[m[32m  get_sysinfo(&after);[m
+[32m+[m
+[32m+[m[32m  // Check if free memory actually reduced[m
+[32m+[m[32m  if (after.freemem >= before.freemem) {[m
+[32m+[m[32m    printf("sysinfotest: free memory didn't drop (something's off)\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Process count should not change during this test[m
+[32m+[m[32m  if (after.nproc != before.nproc) {[m
+[32m+[m[32m    printf("sysinfotest: process count changed unexpectedly\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Free the memory back[m
+[32m+[m[32m  free(mem);[m
+[32m+[m
+[32m+[m[32m  printf("sysinfo check: everything looks fine\n");[m
+[32m+[m[32m  exit(0);[m
+[32m+[m[32m}[m
+[32m+[m
+[1mdiff --git a/user/trace.c b/user/trace.c[m
+[1mnew file mode 100644[m
+[1mindex 0000000..8fd2314[m
+[1m--- /dev/null[m
+[1m+++ b/user/trace.c[m
+[36m@@ -0,0 +1,34 @@[m
+[32m+[m[32m#include "kernel/types.h"[m
+[32m+[m[32m#include "kernel/stat.h"[m
+[32m+[m[32m#include "user/user.h"[m
+[32m+[m
+[32m+[m[32m// Simple trace program for xv6[m
+[32m+[m[32m// Usage: trace <mask> <command> [args...][m
+[32m+[m[32m// Example: trace 32 grep hello README[m
+[32m+[m
+[32m+[m[32mint[m
+[32m+[m[32mmain(int argc, char *argv[])[m
+[32m+[m[32m{[m
+[32m+[m[32m  // Check if user gave enough arguments[m
+[32m+[m[32m  if(argc < 3){[m
+[32m+[m[32m    fprintf(2, "Usage: trace <mask> <command> [args...]\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Convert the first argument (mask) from string to int[m
+[32m+[m[32m  int mask = atoi(argv[1]);[m
+[32m+[m
+[32m+[m[32m  // Call the trace system call[m
+[32m+[m[32m  if(trace(mask) < 0){[m
+[32m+[m[32m    fprintf(2, "trace: syscall didn't work properly\n");[m
+[32m+[m[32m    exit(1);[m
+[32m+[m[32m  }[m
+[32m+[m
+[32m+[m[32m  // Run the actual command after setting the trace[m
+[32m+[m[32m  exec(argv[2], &argv[2]);[m
+[32m+[m
+[32m+[m[32m  // If exec fails, print an error[m
+[32m+[m[32m  fprintf(2, "trace: couldn't run %s\n", argv[2]);[m
+[32m+[m[32m  exit(1);[m
+[32m+[m[32m}[m
+[32m+[m
+[1mdiff --git a/user/user.h b/user/user.h[m
+[1mindex ac84de9..76687a5 100644[m
+[1m--- a/user/user.h[m
+[1m+++ b/user/user.h[m
+[36m@@ -24,6 +24,9 @@[m [mint getpid(void);[m
+ char* sys_sbrk(int,int);[m
+ int pause(int);[m
+ int uptime(void);[m
+[32m+[m[32mint trace(int mask);[m
+[32m+[m[32mstruct sysinfo;[m
+[32m+[m[32mint sysinfo(struct sysinfo *);[m
+ [m
+ // ulib.c[m
+ int stat(const char*, struct stat*);[m
+[1mdiff --git a/user/usys.pl b/user/usys.pl[m
+[1mindex c5d4c3a..cc24d3e 100755[m
+[1m--- a/user/usys.pl[m
+[1m+++ b/user/usys.pl[m
+[36m@@ -42,3 +42,6 @@[m [mentry("getpid");[m
+ entry("sbrk");[m
+ entry("pause");[m
+ entry("uptime");[m
+[32m+[m[32mentry("trace");[m
+[32m+[m[32mentry("sysinfo");[m
+[41m+[m

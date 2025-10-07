@@ -61,6 +61,15 @@ sys_sbrk(void)
   }
   return addr;
 }
+uint64
+sys_trace(void)
+{
+  int mask;
+  argint(0, &mask);
+  struct proc *p = myproc();
+  p->tracemask = mask;
+  return 0;
+}
 
 uint64
 sys_pause(void)
@@ -105,3 +114,29 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+#include "kernel/sysinfo.h"
+#include "defs.h"
+#include "memlayout.h"
+
+// Functions we'll write next
+extern uint64 getfreemem(void);
+extern uint64 getnproc(void);
+
+uint64
+sys_sysinfo(void)
+{
+  struct sysinfo info;
+  uint64 addr; // user pointer
+
+  argaddr(0, &addr);
+
+  info.freemem = getfreemem();
+  info.nproc = getnproc();
+
+  if (copyout(myproc()->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+
+  return 0;
+}
+

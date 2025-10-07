@@ -201,6 +201,9 @@ UPROGS=\
 	$U/_sixfive\
 	$U/_hexdump\
 	$U/_search\
+	$U/_trace\
+	$U/_sysinfotest\
+
 
 ifeq ($(LAB),syscall)
 UPROGS += \
