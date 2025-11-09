@@ -21,6 +21,8 @@ void            bunpin(struct buf*);
 void            consoleinit(void);
 void            consoleintr(int);
 void            consputc(int);
+// Add this anywhere near other console functions
+int cprintf(const char *fmt, ...);
 
 // exec.c
 int             kexec(char*, char**);
