@@ -484,3 +484,26 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
+static void
+vmprint_level(pagetable_t pagetable, int level)
+{
+    for(int i = 0; i < 512; i++){
+        pte_t pte = pagetable[i];
+        if(pte & PTE_V){
+            for(int j = 0; j < level; j++)
+                printf(" ..");
+            printf("%d: pte %p pa %p\n", i, (void*)pte, (void*)PTE2PA(pte));
+            if((pte & (PTE_R | PTE_W | PTE_X)) == 0){
+                // this PTE points to a lower-level page table
+                vmprint_level((pagetable_t)PTE2PA(pte), level + 1);
+            }
+        }
+    }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+    printf("page table %p\n", (void*)pagetable);
+    vmprint_level(pagetable, 0);
+}

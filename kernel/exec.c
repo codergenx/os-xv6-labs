@@ -128,6 +128,9 @@ kexec(char *path, char **argv)
     p->trapframe->epc = elf.entry;
     p->trapframe->sp = sp;
     proc_freepagetable(oldpagetable, 0);
+    if(p->pid == 1)
+    	vmprint(p->pagetable);
+
 
     return argcount;
 }
