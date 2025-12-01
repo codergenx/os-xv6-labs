@@ -25,13 +25,13 @@ struct elfhdr {
 struct proghdr {
   uint32 type;
   uint32 flags;
-  uint64 off;
-  uint64 vaddr;
-  uint64 paddr;
-  uint64 filesz;
-  uint64 memsz;
+  uint64 offset;   // file offset
+  uint64 vaddr;    // virtual address
+  uint64 filesz;   // size in file
+  uint64 memsz;    // size in memory
   uint64 align;
 };
+
 
 // Values for Proghdr type
 #define ELF_PROG_LOAD           1

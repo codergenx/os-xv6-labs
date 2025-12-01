@@ -21,6 +21,8 @@ void            bunpin(struct buf*);
 void            consoleinit(void);
 void            consoleintr(int);
 void            consputc(int);
+// Add this anywhere near other console functions
+int cprintf(const char *fmt, ...);
 
 // exec.c
 int             kexec(char*, char**);
@@ -169,6 +171,7 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
+void            vmprint(pagetable_t pagetable);
 
 // plic.c
 void            plicinit(void);
